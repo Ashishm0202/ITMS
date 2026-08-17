@@ -22,6 +22,8 @@ type Props = {
   placeholder?: string;
   disabled?: boolean;
   searchable?: boolean;
+  helperText?: string;
+  error?: string;
 };
 
 export function SelectField({
@@ -33,6 +35,8 @@ export function SelectField({
   placeholder = "Select...",
   disabled,
   searchable,
+  helperText,
+  error,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -56,7 +60,7 @@ export function SelectField({
         activeOpacity={0.7}
         disabled={disabled}
         onPress={() => setOpen(true)}
-        style={[styles.inputRow, disabled ? styles.disabled : null]}
+        style={[styles.inputRow, disabled ? styles.disabled : null, error ? styles.inputError : null]}
       >
         {icon ? <MaterialIcons name={icon} size={18} color="#78909C" style={styles.icon} /> : null}
         <Text style={[styles.value, !selected ? styles.placeholder : null]}>
@@ -64,6 +68,11 @@ export function SelectField({
         </Text>
         <MaterialIcons name="arrow-drop-down" size={22} color="#78909C" />
       </TouchableOpacity>
+      {error ? (
+        <Text style={styles.errorText}>{error}</Text>
+      ) : helperText ? (
+        <Text style={styles.helperText}>{helperText}</Text>
+      ) : null}
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={close}>
         <Pressable style={styles.backdrop} onPress={close}>
@@ -123,6 +132,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   disabled: { backgroundColor: "#F5F5F5" },
+  inputError: { borderColor: "#D32F2F" },
+  helperText: { fontSize: 11, color: "#90A4AE", marginTop: 4 },
+  errorText: { fontSize: 11, color: "#D32F2F", marginTop: 4 },
   icon: { marginRight: 6 },
   value: { flex: 1, fontSize: 15, color: "#263238" },
   placeholder: { color: "#9AA5B1" },

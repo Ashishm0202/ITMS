@@ -9,7 +9,8 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ashish0211.ITMS"
     },
     "android": {
       "adaptiveIcon": {
@@ -59,7 +60,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "00cc4aa0-dd2e-4ba5-abfa-b24025ba80b9"
+        "projectId": "90f57d35-b99d-4e57-860b-518b66d2314c"
       }
     }
   }

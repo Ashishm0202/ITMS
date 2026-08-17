@@ -9,6 +9,8 @@ type Props = {
   uri: string | null;
   onChange: (dataUri: string | null) => void;
   error?: string;
+  /** True while the parent is pushing this photo to the bucket - locks the field and shows a spinner. */
+  uploading?: boolean;
 };
 
 /** Resizes to 800x600 and returns a "data:image/jpeg;base64,..." URI - mirrors the backend's own upload prep. */
@@ -20,10 +22,12 @@ async function toUploadDataUri(sourceUri: string): Promise<string> {
   return `data:image/jpeg;base64,${result.base64}`;
 }
 
-export function ImageUploadField({ label, uri, onChange, error }: Props) {
+export function ImageUploadField({ label, uri, onChange, error, uploading }: Props) {
   const [libraryPermission, requestLibraryPermission] = ImagePicker.useMediaLibraryPermissions();
   const [cameraPermission, requestCameraPermission] = ImagePicker.useCameraPermissions();
   const [processing, setProcessing] = useState(false);
+  // Resizing locally and pushing to the bucket both block the pickers.
+  const locked = processing || !!uploading;
 
   async function pickFromGallery() {
     if (!libraryPermission?.granted) {
@@ -62,13 +66,19 @@ export function ImageUploadField({ label, uri, onChange, error }: Props) {
       {uri ? (
         <View style={styles.thumbWrap}>
           <Image source={{ uri }} style={styles.thumb} />
-          <TouchableOpacity style={styles.removeBtn} onPress={() => onChange(null)}>
-            <MaterialIcons name="close" size={14} color="#fff" />
-          </TouchableOpacity>
+          {uploading ? (
+            <View style={[styles.thumb, styles.uploadingOverlay]}>
+              <ActivityIndicator size="small" color="#fff" />
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.removeBtn} onPress={() => onChange(null)}>
+              <MaterialIcons name="close" size={14} color="#fff" />
+            </TouchableOpacity>
+          )}
         </View>
       ) : (
         <View style={[styles.thumb, styles.placeholder, error ? styles.placeholderError : null]}>
-          {processing ? (
+          {locked ? (
             <ActivityIndicator size="small" color="#1976D2" />
           ) : (
             <MaterialIcons name="image" size={26} color={error ? "#D32F2F" : "#B0BEC5"} />
@@ -77,11 +87,11 @@ export function ImageUploadField({ label, uri, onChange, error }: Props) {
       )}
 
       <View style={styles.row}>
-        <TouchableOpacity style={styles.actionBtn} onPress={pickFromGallery} disabled={processing}>
+        <TouchableOpacity style={styles.actionBtn} onPress={pickFromGallery} disabled={locked}>
           <MaterialIcons name="photo-library" size={16} color="#1976D2" />
           <Text style={styles.actionText}>Gallery</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} onPress={captureFromCamera} disabled={processing}>
+        <TouchableOpacity style={styles.actionBtn} onPress={captureFromCamera} disabled={locked}>
           <MaterialIcons name="photo-camera" size={16} color="#1976D2" />
           <Text style={styles.actionText}>Camera</Text>
         </TouchableOpacity>
@@ -103,6 +113,16 @@ const styles = StyleSheet.create({
   },
   placeholder: { alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#CFD8DC", borderStyle: "dashed" },
   placeholderError: { borderColor: "#D32F2F" },
+  uploadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
   errorText: { fontSize: 11, color: "#D32F2F", marginTop: 4 },
   removeBtn: {
     position: "absolute",

@@ -1,13 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
+import { AuthUser, setCurrentUser } from "@/lib/authStore";
 import { decrypt } from "@/lib/cryptoUtils";
 import { getFieldCI } from "@/lib/object";
 import { getUserByEmail } from "@/services/api";
 
 const STORAGE_KEY = "itms_auth_user";
 
-export type AuthUser = Record<string, unknown>;
+export type { AuthUser };
 
 type AuthContextValue = {
   user: AuthUser | null;
@@ -21,6 +22,11 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Mirror every user change into the non-React snapshot so services/api.ts can read it.
+  useEffect(() => {
+    setCurrentUser(user);
+  }, [user]);
 
   useEffect(() => {
     (async () => {

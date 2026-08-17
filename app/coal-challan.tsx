@@ -13,7 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card } from "@/components/ui/Card";
 import { DateField } from "@/components/ui/DateField";
@@ -25,11 +25,12 @@ import { SectionHeader } from "@/components/ui/SectionHeader";
 import { SelectField } from "@/components/ui/SelectField";
 import { useCoalChallan } from "@/context/CoalChallanContext";
 import { useToast } from "@/context/ToastContext";
-import { formatDateForApi, formatYyyyMmDd, parseMasterDate, parseScanDateTime } from "@/lib/date";
+import { formatDateForApi, parseMasterDate, parseScanDateTime } from "@/lib/date";
+import { absoluteUrl, buildFolderName, toUploadRequest, validateFolderName } from "@/lib/imageUpload";
 import { parseSubmitMessage } from "@/lib/submitMessage";
-import { aadharNoError, expiryError, isExpired, isValidAadharNo, isValidMobileNo, mobileNoError } from "@/lib/validation";
-import { submitCoalChallan, TRANS_CODE_MAST } from "@/services/api";
-import { CoalChallanPostDetails } from "@/types/models";
+import { aadharNoError, expiryError, mobileNoError } from "@/lib/validation";
+import { getImageUrl, submitCoalChallan, uploadImage } from "@/services/api";
+import { CoalChallanPostDetails, ImageResponse } from "@/types/models";
 
 // Keys match each photo's on-screen label so the payload's imG_1..4 mapping stays traceable.
 type ChallanImages = {
@@ -44,6 +45,18 @@ const emptyImages = (): ChallanImages => ({
   transporterChallan: null,
   ewayBill: null,
 });
+
+/** Per-photo upload flags/errors, keyed the same way as ChallanImages. */
+type ImageFlags = Partial<Record<keyof ChallanImages, boolean>>;
+type ImageErrors = Partial<Record<keyof ChallanImages, string>>;
+
+/** All four photos are mandatory - listed in on-screen order so the toast names the first gap. */
+const REQUIRED_PHOTOS: [keyof ChallanImages, string][] = [
+  ["transitPass", "Transit Pass"],
+  ["mclWeighment", "MCL Weighment-cum-Challan"],
+  ["transporterChallan", "Transporter Delivery Challan"],
+  ["ewayBill", "E-Way Bill"],
+];
 
 type VehicleForm = {
   regNo: string;
@@ -102,10 +115,16 @@ const emptyDoPoForm = (): DoPoForm => ({
 
 const CURRENT_YEAR_START = new Date(new Date().getFullYear(), 0, 1);
 
+/** Breathing room under the Submit button, before the device's bottom inset is added on top. */
+const SCROLL_BOTTOM_PADDING = 32;
+
 export default function CoalChallanScreen() {
   const { user, scanData, scanRaw, vehicle, drivers, dopoList, loadingDetails, fetchCoalDetails, reset } =
     useCoalChallan();
   const { show } = useToast();
+  // The hero owns the top inset via SafeAreaView; the scroll content has to carry the bottom one,
+  // otherwise the Submit button sits under the home indicator / gesture bar.
+  const insets = useSafeAreaInsets();
 
   const [vehicleForm, setVehicleForm] = useState<VehicleForm>(emptyVehicleForm());
   const [driverForm, setDriverForm] = useState<DriverForm>(emptyDriverForm());
@@ -125,14 +144,76 @@ export default function CoalChallanScreen() {
   const [tpValidity, setTpValidity] = useState<Date | null>(null);
 
   const [images, setImages] = useState<ChallanImages>(emptyImages());
+  /** The bucket path each photo was stored at - this, not the base64, is what imG_1..4 carry. */
+  const [imagePaths, setImagePaths] = useState<ChallanImages>(emptyImages());
+  const [imageUploading, setImageUploading] = useState<ImageFlags>({});
+  const [imageErrors, setImageErrors] = useState<ImageErrors>({});
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [result, setResult] = useState<
     { type: "success" | "error"; message: string; gatepassNo: string | null } | null
   >(null);
 
-  function setImage(key: keyof ChallanImages, uri: string | null) {
-    setImages((prev) => ({ ...prev, [key]: uri }));
+  /**
+   * A new pick is previewed locally and pushed to the bucket right away - the response's "data" is
+   * the stored path, which is what the payload's imG_1..4 carry. That path is then handed to
+   * ShortenUrl purely as a check that the stored image is actually retrievable; its viewable URL is
+   * logged, not submitted. The field key doubles as the file name stem, so the bucket path reads
+   * "QRChallan/transitPass<yyyymmdd><mm><ss>.png".
+   */
+  async function onPickImage(key: keyof ChallanImages, dataUri: string | null) {
+    setImages((prev) => ({ ...prev, [key]: dataUri }));
+    // Whatever is on the server is stale the moment the photo changes.
+    setImagePaths((prev) => ({ ...prev, [key]: null }));
+    setImageErrors((prev) => ({ ...prev, [key]: undefined }));
+    if (!dataUri) return;
+
+    const folderName = buildFolderName(key, new Date());
+    const invalid = validateFolderName(folderName);
+    if (invalid) {
+      setImageErrors((prev) => ({ ...prev, [key]: invalid }));
+      return;
+    }
+
+    setImageUploading((prev) => ({ ...prev, [key]: true }));
+    try {
+      console.log(`[coal-challan] uploading ${key} to bucket path "${folderName}"...`);
+
+      const uploaded: ImageResponse = await uploadImage(toUploadRequest(dataUri, folderName));
+      if (!uploaded.success || !uploaded.data) {
+        setImageErrors((prev) => ({ ...prev, [key]: uploaded.message || "Upload failed" }));
+        return;
+      }
+
+      console.log(`[coal-challan] uploaded ${key} path: ${uploaded.data}`);
+      console.log(`[coal-challan] resolving viewable URL for ${key} path: ${uploaded.data}`);
+
+      const viewable: ImageResponse = await getImageUrl(uploaded.data);
+      if (!viewable.success || !viewable.data) {
+        setImageErrors((prev) => ({
+          ...prev,
+          [key]: viewable.message || "Could not resolve the image URL",
+        }));
+        return;
+      }
+
+      console.log(`[coal-challan] viewable ${key} URL: ${absoluteUrl(viewable.data)}`);
+
+      // The bucket path, not the resolved URL - that is what the backend expects in imG_1..4.
+      setImagePaths((prev) => ({ ...prev, [key]: uploaded.data }));
+    } catch (e) {
+      setImageErrors((prev) => ({ ...prev, [key]: e instanceof Error ? e.message : "Upload failed" }));
+    } finally {
+      setImageUploading((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
+  /** Upload failures show immediately; missing-photo markers stay quiet until the first submit attempt. */
+  function photoError(key: keyof ChallanImages): string | undefined {
+    if (imageErrors[key]) return imageErrors[key];
+    if (!submitted || imageUploading[key]) return undefined;
+    if (!images[key]) return "Photo is required";
+    return imagePaths[key] ? undefined : "Not uploaded yet";
   }
 
   useEffect(() => {
@@ -155,6 +236,9 @@ export default function CoalChallanScreen() {
     setCoalGrade("");
     setTpValidity(null);
     setImages(emptyImages());
+    setImagePaths(emptyImages());
+    setImageUploading({});
+    setImageErrors({});
     setSubmitted(false);
     reset();
     // Only run once, on mount.
@@ -285,61 +369,82 @@ export default function CoalChallanScreen() {
 
   async function onSubmit() {
     setSubmitted(true);
-    if (!vehicleForm.regNo || !tpNo || !grossWeight || !tareWeight || !netWeight) {
-      show("Please fill vehicle number, TP No and weight details", "warning");
+    // NOTE: every check except the photo one below is intentionally disabled for now. To restore
+    // them, uncomment these blocks and re-add the imports they need: formatYyyyMmDd from
+    // "@/lib/date" (for tP_VLD_DT) and isExpired/isValidMobileNo/isValidAadharNo from
+    // "@/lib/validation".
+    // if (!vehicleForm.regNo || !tpNo || !grossWeight || !tareWeight || !netWeight) {
+    //   show("Please fill vehicle number, TP No and weight details", "warning");
+    //   return;
+    // }
+    // if (!lrNo.trim()) {
+    //   show("Please enter LR No", "warning");
+    //   return;
+    // }
+    // if (!tpDate) {
+    //   show("Please select TP Date", "warning");
+    //   return;
+    // }
+    // if (!lrDate) {
+    //   show("Please select LR Date", "warning");
+    //   return;
+    // }
+    // if (!tpValidity) {
+    //   show("Please select TP validity date", "warning");
+    //   return;
+    // }
+    // // Driver Details is optional: only validate the section once a DL No has been picked.
+    // if (driverForm.licenceNo) {
+    //   if (!driverForm.name || !driverForm.mobileNo) {
+    //     show("Please fill in driver name and mobile number", "warning");
+    //     return;
+    //   }
+    //   if (!isValidMobileNo(driverForm.mobileNo)) {
+    //     show("Mobile number must be 10 digits", "warning");
+    //     return;
+    //   }
+    //   if (driverForm.adhrNo && !isValidAadharNo(driverForm.adhrNo)) {
+    //     show("Aadhar number must be 12 digits", "warning");
+    //     return;
+    //   }
+    // }
+    // if (!doPoForm.doNo || !doPoForm.poNo) {
+    //   show("Please fill DO number and PO number", "warning");
+    //   return;
+    // }
+    // const expiryChecks: [string, Date | null][] = [
+    //   ["RC Expiry", vehicleForm.rcExpDate],
+    //   ["Fitness Expiry", vehicleForm.fitExpDate],
+    //   ["Insurance Expiry", vehicleForm.insValidDate],
+    //   ["PUC Expiry", vehicleForm.pucExpDate],
+    //   ["License Expiry", driverForm.licExpDate],
+    //   ["Medical Expiry", driverForm.medExpDate],
+    //   ["Kiosk Expiry", driverForm.kskExpDate],
+    //   ["HCV Expiry", driverForm.hcvExpDate],
+    //   ["Police Verification Expiry", driverForm.polExpDate],
+    //   ["TP Validity Date", tpValidity],
+    // ];
+    // const expired = expiryChecks.find(([, date]) => isExpired(date));
+    // if (expired) {
+    //   show(`${expired[0]} has expired`, "warning");
+    //   return;
+    // }
+    const missingPhotos = REQUIRED_PHOTOS.filter(([key]) => !images[key]);
+    if (missingPhotos.length) {
+      const more = missingPhotos.length > 1 ? ` (+${missingPhotos.length - 1} more)` : "";
+      show(`Please attach the ${missingPhotos[0][1]} photo${more}`, "warning");
       return;
     }
-    if (!lrNo.trim()) {
-      show("Please enter LR No", "warning");
+    const stillUploading = REQUIRED_PHOTOS.find(([key]) => imageUploading[key]);
+    if (stillUploading) {
+      show(`The ${stillUploading[1]} photo is still uploading`, "warning");
       return;
     }
-    if (!tpDate) {
-      show("Please select TP Date", "warning");
-      return;
-    }
-    if (!lrDate) {
-      show("Please select LR Date", "warning");
-      return;
-    }
-    if (!images.transitPass || !images.mclWeighment || !images.transporterChallan || !images.ewayBill) {
-      show("Please upload all 4 photos", "warning");
-      return;
-    }
-    if (!tpValidity) {
-      show("Please select TP validity date", "warning");
-      return;
-    }
-    if (!driverForm.name || !driverForm.licenceNo || !driverForm.mobileNo) {
-      show("Please select a driver and fill in mobile number", "warning");
-      return;
-    }
-    if (!isValidMobileNo(driverForm.mobileNo)) {
-      show("Mobile number must be 10 digits", "warning");
-      return;
-    }
-    if (driverForm.adhrNo && !isValidAadharNo(driverForm.adhrNo)) {
-      show("Aadhar number must be 12 digits", "warning");
-      return;
-    }
-    if (!doPoForm.doNo || !doPoForm.poNo) {
-      show("Please fill DO number and PO number", "warning");
-      return;
-    }
-    const expiryChecks: [string, Date | null][] = [
-      ["RC Expiry", vehicleForm.rcExpDate],
-      ["Fitness Expiry", vehicleForm.fitExpDate],
-      ["Insurance Expiry", vehicleForm.insValidDate],
-      ["PUC Expiry", vehicleForm.pucExpDate],
-      ["License Expiry", driverForm.licExpDate],
-      ["Medical Expiry", driverForm.medExpDate],
-      ["Kiosk Expiry", driverForm.kskExpDate],
-      ["HCV Expiry", driverForm.hcvExpDate],
-      ["Police Verification Expiry", driverForm.polExpDate],
-      ["TP Validity Date", tpValidity],
-    ];
-    const expired = expiryChecks.find(([, date]) => isExpired(date));
-    if (expired) {
-      show(`${expired[0]} has expired`, "warning");
+    // A photo can be attached but have no path if its upload or URL check failed - the payload needs the path.
+    const unuploaded = REQUIRED_PHOTOS.filter(([key]) => !imagePaths[key]);
+    if (unuploaded.length) {
+      const more = unuploaded.length > 1 ? ` (+${unuploaded.length - 1} more)` : "";
+      show(`Upload failed for the ${unuploaded[0][1]} photo${more} - please re-attach it`, "warning");
       return;
     }
     setBusy(true);
@@ -377,7 +482,7 @@ export default function CoalChallanScreen() {
         mineS_NAME: doPoForm.minesName,
         dO_NO: doPoForm.doNo,
         transporter: user.ORGANIZATION,
-        tranS_CODE: TRANS_CODE_MAST,
+        tranS_CODE: user.ORGANIZATION,
         lifnr: doPoForm.vendorCode,
         grade: coalGrade,
         cT_WGHT: tareWeight,
@@ -396,20 +501,25 @@ export default function CoalChallanScreen() {
         balti: "0",
         gutkha: "0",
         otheR_MATERIAL: "0",
-        tP_VLD_DT: formatYyyyMmDd(tpValidity),
+        // Nullable now that the TP-validity guard above is commented out.
+        tP_VLD_DT: formatDateForApi(tpValidity),
         tP_NO: tpNo,
         tP_DT: formatDateForApi(tpDate),
         lR_NO: lrNo,
         lR_DT: formatDateForApi(lrDate),
-        imG_1: images.transitPass ?? "",
-        imG_2: images.mclWeighment ?? "",
-        imG_3: images.transporterChallan ?? "",
-        imG_4: images.ewayBill ?? "",
+        // Bucket paths from the on-pick uploads, not the base64 bytes or the resolved URLs.
+        imG_1: imagePaths.transitPass ?? "",
+        imG_2: imagePaths.mclWeighment ?? "",
+        imG_3: imagePaths.transporterChallan ?? "",
+        imG_4: imagePaths.ewayBill ?? "",
       };
 
       console.log("[coal-challan] submitting postDetails:", JSON.stringify(postDetails, null, 2));
       const apiResult = await submitCoalChallan(postDetails);
       const { summary, gatepassNo } = parseSubmitMessage(apiResult.message);
+
+      console.log("api error:", apiResult);
+
       setResult({
         type: apiResult.success ? "success" : "error",
         message: apiResult.success ? "Your challan has been submitted successfully." : summary,
@@ -462,7 +572,10 @@ export default function CoalChallanScreen() {
       </LinearGradient>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={[styles.scroll, { paddingBottom: SCROLL_BOTTOM_PADDING + insets.bottom }]}
+          keyboardShouldPersistTaps="handled"
+        >
           <Card accentColor="#1976D2">
             <SectionHeader icon="local-shipping" title="Vehicle Number" color="#1976D2" />
             <LabeledInput
@@ -530,7 +643,7 @@ export default function CoalChallanScreen() {
             </View>
             <View style={styles.row}>
               <View style={styles.half}>
-                <LabeledInput label="Transporter Code" value={TRANS_CODE_MAST} editable={false} />
+                <LabeledInput label="Transporter Code" value={user.ORGANIZATION} editable={false} />
               </View>
               <View style={styles.half}>
                 <LabeledInput label="PO Quantity" value={doPoForm.poQty} keyboardType="decimal-pad" editable={!doPoLocked} onChangeText={(t) => setDoPoField("poQty", t)} />
@@ -546,28 +659,24 @@ export default function CoalChallanScreen() {
               value={tpNo}
               editable={!scanData}
               onChangeText={setTpNo}
-              error={submitted && !tpNo.trim() ? "TP No is required" : undefined}
             />
             <DateField
               label="TP Date"
               value={tpDate}
               onChange={setTpDate}
               minimumDate={CURRENT_YEAR_START}
-              error={submitted && !tpDate ? "TP Date is required" : undefined}
             />
             <LabeledInput
               label="LR No"
               icon="receipt-long"
               value={lrNo}
               onChangeText={setLrNo}
-              error={submitted && !lrNo.trim() ? "LR No is required" : undefined}
             />
             <DateField
               label="LR Date"
               value={lrDate}
               onChange={setLrDate}
               minimumDate={CURRENT_YEAR_START}
-              error={submitted && !lrDate ? "LR Date is required" : undefined}
             />
             <View style={styles.row}>
               <View style={styles.third}>
@@ -585,11 +694,11 @@ export default function CoalChallanScreen() {
               label="TP Validity Date"
               value={tpValidity}
               onChange={setTpValidity}
-              error={expiryError(tpValidity, "TP validity")}
+              // error={expiryError(tpValidity, "TP validity")}
             />
           </Card>
 
-          <Card accentColor="#1976D2" style={styles.cardGap}>
+          {/* <Card accentColor="#1976D2" style={styles.cardGap}>
             <SectionHeader icon="directions-car" title="Vehicle Details" color="#1976D2" />
             <View style={styles.row}>
               <View style={styles.half}>
@@ -601,7 +710,7 @@ export default function CoalChallanScreen() {
                   value={vehicleForm.rcExpDate}
                   disabled={!!vehicle}
                   onChange={(d) => setVehicleField("rcExpDate", d)}
-                  error={expiryError(vehicleForm.rcExpDate, "RC")}
+                  // error={expiryError(vehicleForm.rcExpDate, "RC")}
                 />
               </View>
             </View>
@@ -615,7 +724,7 @@ export default function CoalChallanScreen() {
                   value={vehicleForm.fitExpDate}
                   disabled={!!vehicle}
                   onChange={(d) => setVehicleField("fitExpDate", d)}
-                  error={expiryError(vehicleForm.fitExpDate, "Fitness")}
+                  // error={expiryError(vehicleForm.fitExpDate, "Fitness")}
                 />
               </View>
             </View>
@@ -629,7 +738,7 @@ export default function CoalChallanScreen() {
                   value={vehicleForm.insValidDate}
                   disabled={!!vehicle}
                   onChange={(d) => setVehicleField("insValidDate", d)}
-                  error={expiryError(vehicleForm.insValidDate, "Insurance")}
+                  // error={expiryError(vehicleForm.insValidDate, "Insurance")}
                 />
               </View>
             </View>
@@ -643,13 +752,13 @@ export default function CoalChallanScreen() {
                   value={vehicleForm.pucExpDate}
                   disabled={!!vehicle}
                   onChange={(d) => setVehicleField("pucExpDate", d)}
-                  error={expiryError(vehicleForm.pucExpDate, "PUC")}
+                  // error={expiryError(vehicleForm.pucExpDate, "PUC")}
                 />
               </View>
             </View>
-          </Card>
+          </Card> */}
 
-          <Card accentColor="#43A047" style={styles.cardGap}>
+          { /*<Card accentColor="#43A047" style={styles.cardGap}>
             <SectionHeader icon="person" title="Driver Details" color="#43A047" />
             <SelectField
               label="DL No"
@@ -669,7 +778,7 @@ export default function CoalChallanScreen() {
                   value={driverForm.licExpDate}
                   disabled={driverLocked}
                   onChange={(d) => setDriverForm((p) => ({ ...p, licExpDate: d }))}
-                  error={expiryError(driverForm.licExpDate, "License")}
+                  // error={expiryError(driverForm.licExpDate, "License")}
                 />
               </View>
               <View style={styles.half}>
@@ -678,7 +787,7 @@ export default function CoalChallanScreen() {
                   value={driverForm.medExpDate}
                   disabled={driverLocked}
                   onChange={(d) => setDriverForm((p) => ({ ...p, medExpDate: d }))}
-                  error={expiryError(driverForm.medExpDate, "Medical certificate")}
+                  // error={expiryError(driverForm.medExpDate, "Medical certificate")}
                 />
               </View>
             </View>
@@ -689,7 +798,7 @@ export default function CoalChallanScreen() {
                   value={driverForm.kskExpDate}
                   disabled={driverLocked}
                   onChange={(d) => setDriverForm((p) => ({ ...p, kskExpDate: d }))}
-                  error={expiryError(driverForm.kskExpDate, "Kiosk certificate")}
+                  // error={expiryError(driverForm.kskExpDate, "Kiosk certificate")}
                 />
               </View>
               <View style={styles.half}>
@@ -698,7 +807,7 @@ export default function CoalChallanScreen() {
                   value={driverForm.hcvExpDate}
                   disabled={driverLocked}
                   onChange={(d) => setDriverForm((p) => ({ ...p, hcvExpDate: d }))}
-                  error={expiryError(driverForm.hcvExpDate, "HCV license")}
+                  // error={expiryError(driverForm.hcvExpDate, "HCV license")}
                 />
               </View>
             </View>
@@ -707,7 +816,7 @@ export default function CoalChallanScreen() {
               value={driverForm.polExpDate}
               disabled={driverLocked}
               onChange={(d) => setDriverForm((p) => ({ ...p, polExpDate: d }))}
-              error={expiryError(driverForm.polExpDate, "Police verification")}
+              // error={expiryError(driverForm.polExpDate, "Police verification")}
             />
             <View style={styles.row}>
               <View style={styles.half}>
@@ -733,7 +842,7 @@ export default function CoalChallanScreen() {
                 />
               </View>
             </View>
-          </Card>
+          </Card> */}
 
           <Card style={styles.cardGap}>
             <SectionHeader icon="photo-camera" title="Photos" color="#607D8B" />
@@ -741,26 +850,30 @@ export default function CoalChallanScreen() {
               <ImageUploadField
                 label="Transit Pass"
                 uri={images.transitPass}
-                onChange={(uri) => setImage("transitPass", uri)}
-                error={submitted && !images.transitPass ? "Required" : undefined}
+                onChange={(uri) => onPickImage("transitPass", uri)}
+                error={photoError("transitPass")}
+                uploading={imageUploading.transitPass}
               />
               <ImageUploadField
                 label="MCL Weighment-cum-Challan"
                 uri={images.mclWeighment}
-                onChange={(uri) => setImage("mclWeighment", uri)}
-                error={submitted && !images.mclWeighment ? "Required" : undefined}
+                onChange={(uri) => onPickImage("mclWeighment", uri)}
+                error={photoError("mclWeighment")}
+                uploading={imageUploading.mclWeighment}
               />
               <ImageUploadField
                 label="Transporter Delivery Challan"
                 uri={images.transporterChallan}
-                onChange={(uri) => setImage("transporterChallan", uri)}
-                error={submitted && !images.transporterChallan ? "Required" : undefined}
+                onChange={(uri) => onPickImage("transporterChallan", uri)}
+                error={photoError("transporterChallan")}
+                uploading={imageUploading.transporterChallan}
               />
               <ImageUploadField
                 label="E-Way Bill"
                 uri={images.ewayBill}
-                onChange={(uri) => setImage("ewayBill", uri)}
-                error={submitted && !images.ewayBill ? "Required" : undefined}
+                onChange={(uri) => onPickImage("ewayBill", uri)}
+                error={photoError("ewayBill")}
+                uploading={imageUploading.ewayBill}
               />
             </View>
           </Card>
@@ -814,7 +927,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  scroll: { padding: 16, paddingTop: 20, paddingBottom: 32 },
+  // paddingBottom is overridden per-render with the device's bottom inset added on.
+  scroll: { padding: 16, paddingTop: 20, paddingBottom: SCROLL_BOTTOM_PADDING },
   cardGap: { marginTop: 16 },
   row: { flexDirection: "row", gap: 12 },
   third: { flex: 1 },
