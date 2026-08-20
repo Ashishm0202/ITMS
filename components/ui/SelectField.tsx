@@ -1,8 +1,11 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -10,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Option = { label: string; value: string };
 
@@ -38,9 +42,22 @@ export function SelectField({
   helperText,
   error,
 }: Props) {
+  const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const selected = options.find((o) => o.value === value);
+
+  useEffect(() => {
+    if (!searchable) return;
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const subs = [
+      Keyboard.addListener(showEvent, () => setKeyboardVisible(true)),
+      Keyboard.addListener(hideEvent, () => setKeyboardVisible(false)),
+    ];
+    return () => subs.forEach((s) => s.remove());
+  }, [searchable]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -75,44 +92,52 @@ export function SelectField({
       ) : null}
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={close}>
-        <Pressable style={styles.backdrop} onPress={close}>
-          <View style={styles.sheet} onStartShouldSetResponder={() => true}>
-            <Text style={styles.sheetTitle}>{label}</Text>
-            {searchable ? (
-              <View style={styles.searchRow}>
-                <MaterialIcons name="search" size={18} color="#78909C" style={styles.icon} />
-                <TextInput
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder="Search..."
-                  placeholderTextColor="#9AA5B1"
-                  style={styles.searchInput}
-                  autoFocus
-                />
-              </View>
-            ) : null}
-            <FlatList
-              data={filtered}
-              keyExtractor={(item) => item.value}
-              keyboardShouldPersistTaps="handled"
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.option}
-                  onPress={() => {
-                    onChange(item.value);
-                    close();
-                  }}
-                >
-                  <Text style={styles.optionText}>{item.label}</Text>
-                  {item.value === value ? (
-                    <MaterialIcons name="check" size={18} color="#1976D2" />
-                  ) : null}
-                </TouchableOpacity>
-              )}
-              ListEmptyComponent={<Text style={styles.empty}>No options available</Text>}
-            />
-          </View>
-        </Pressable>
+        <KeyboardAvoidingView style={styles.flex} behavior="padding">
+          <Pressable style={styles.backdrop} onPress={close}>
+            <View
+              style={[
+                styles.sheet,
+                { paddingBottom: keyboardVisible ? 16 : Math.max(insets.bottom, 16) },
+              ]}
+              onStartShouldSetResponder={() => true}
+            >
+              <Text style={styles.sheetTitle}>{label}</Text>
+              {searchable ? (
+                <View style={styles.searchRow}>
+                  <MaterialIcons name="search" size={18} color="#78909C" style={styles.icon} />
+                  <TextInput
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder="Search..."
+                    placeholderTextColor="#9AA5B1"
+                    style={styles.searchInput}
+                    autoFocus
+                  />
+                </View>
+              ) : null}
+              <FlatList
+                data={filtered}
+                keyExtractor={(item) => item.value}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.option}
+                    onPress={() => {
+                      onChange(item.value);
+                      close();
+                    }}
+                  >
+                    <Text style={styles.optionText}>{item.label}</Text>
+                    {item.value === value ? (
+                      <MaterialIcons name="check" size={18} color="#1976D2" />
+                    ) : null}
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={<Text style={styles.empty}>No options available</Text>}
+              />
+            </View>
+          </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -139,11 +164,13 @@ const styles = StyleSheet.create({
   value: { flex: 1, fontSize: 15, color: "#263238" },
   placeholder: { color: "#9AA5B1" },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },
+  flex: { flex: 1 },
   sheet: {
     backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
     maxHeight: "70%",
   },
   sheetTitle: { fontSize: 16, fontWeight: "700", marginBottom: 10, color: "#263238" },

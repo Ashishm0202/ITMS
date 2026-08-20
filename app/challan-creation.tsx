@@ -186,7 +186,7 @@ export default function ChallanCreationScreen() {
               router.push("/scanner");
             }}
           />
-          <ActionCard
+          {/* <ActionCard
             icon="edit"
             title="Manual"
             subtitle="Enter transit pass details by hand"
@@ -195,7 +195,7 @@ export default function ChallanCreationScreen() {
               reset();
               router.push("/coal-challan");
             }}
-          />
+          /> */}
           <ActionCard
             icon="change-circle"
             title="Change"
