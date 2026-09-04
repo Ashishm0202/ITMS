@@ -631,8 +631,8 @@ export default function PreviewChallanScreen() {
     else if (isExpired(driverForm.kskExpDate)) e.kskExpDate = "Kiosk certificate has expired";
     if (!driverForm.hcvExpDate) e.hcvExpDate = "HCV Expiry is required";
     else if (isExpired(driverForm.hcvExpDate)) e.hcvExpDate = "HCV license has expired";
-    if (!driverForm.polExpDate) e.polExpDate = "Police Verification Expiry is required";
-    else if (isExpired(driverForm.polExpDate)) e.polExpDate = "Police verification has expired";
+    // if (!driverForm.polExpDate) e.polExpDate = "Police Verification Expiry is required";
+    // else if (isExpired(driverForm.polExpDate)) e.polExpDate = "Police verification has expired";
     if (!driverForm.mobileNo.trim()) e.mobileNo = "Mobile No is required";
     else if (!isValidMobileNo(driverForm.mobileNo)) e.mobileNo = "Mobile number must be 10 digits";
     if (!driverForm.adhrNo.trim()) e.adhrNo = "Aadhar No is required";
@@ -1092,13 +1092,13 @@ export default function PreviewChallanScreen() {
                 />
               </View>
             </View>
-            <DateField
+            {/* <DateField
               label="Police Verification Expiry"
               value={driverForm.polExpDate}
               disabled={driverLocked}
               onChange={(d) => setDriverForm((p) => ({ ...p, polExpDate: d }))}
               error={expiryError(driverForm.polExpDate, "Police verification") ?? fieldError("polExpDate")}
-            />
+            /> */}
             <View style={styles.row}>
               <View style={styles.half}>
                 <LabeledInput

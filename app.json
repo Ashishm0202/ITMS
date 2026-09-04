@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "ITMS",
-    "slug": "ITMS",
-    "version": "1.0.0",
+    "name": "FACOR ITMS",
+    "slug": "facoritms",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "itms",
@@ -10,14 +10,14 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.ashish0211.ITMS"
+      "bundleIdentifier": "com.aondigicon.FACORITMS"
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/foreground.png",
+        "backgroundImage": "./assets/images/background.png",
+        "monochromeImage": "./assets/images/monochrome.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -25,7 +25,7 @@
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
       ],
-      "package": "com.ashish0211.ITMS"
+      "package": "com.aondigicon.FACORITMS"
     },
     "web": {
       "output": "static",
@@ -36,7 +36,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/foreground.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
@@ -60,7 +60,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "90f57d35-b99d-4e57-860b-518b66d2314c"
+        "projectId": "153c41d8-7718-4b3d-96ef-c57df4c7ec17"
       }
     }
   }
