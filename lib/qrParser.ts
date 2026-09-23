@@ -9,7 +9,7 @@ import { ScanData } from "@/types/models";
  * This mirrors the real weighbridge payloads observed in production - see BASELINE below.
  */
 const BASELINE = {
-  TP_VALIDITY: 5,
+  TP_VALIDITY: 6,
   DO_NO_RAW: 19,
   PROCESS_TYPE: 21,
   COAL_GRADE: 24,

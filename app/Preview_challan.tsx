@@ -973,6 +973,9 @@ export default function PreviewChallanScreen() {
             <DateField
               label="TP Validity Date"
               value={tpValidity}
+              disabled={true}
+              // minimumDate={CURRENT_YEAR_START}
+              // maximumDate={new Date()}
               onChange={setTpValidity}
               error={expiryError(tpValidity, "TP validity") ?? fieldError("tpValidity")}
             />

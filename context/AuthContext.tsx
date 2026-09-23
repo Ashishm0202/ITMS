@@ -60,6 +60,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       return { success: false, message: "Could not verify password" };
     }
 
+    console.log("decrypted",decryptedPassword);
+    console.log("pass",password);
+    
+    
     if (decryptedPassword !== password) {
       return { success: false, message: "Invalid password" };
     }
